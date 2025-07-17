@@ -1,47 +1,38 @@
-# sample-tracing-python
+⚙️ Project Overview
+Services
+UI Service (cyberpulse-ui)
 
-## Installation
+Built with Flask + HTMX/Tailwind for interactivity
 
-#### Clone this repositiory
+Users can:
 
-```
-git clone https://github.com/openobserve/sample-tracing-python.git
-```
+View recent threats
 
-#### Navigate to your project directory
+Filter by type (e.g., IOC type, severity, date, tags, etc.)
 
-```
-cd sample-tracing-python
-```
+API Service (cyberpulse-api)
 
-#### Create the virtual environment
+Exposes endpoints like /api/threats?type=IP&date=last7days
 
-```
-python3 -m venv venv
-```
+Fetches from MongoDB
 
-#### Activate the virtual environment
+Communicates with the background threat-ingestion service
 
-On macOS and Linux:
+Ingestion Service (cyberpulse-ingestor)
 
-```
-source venv/bin/activate
-```
+Periodically fetches recent AlienVault OTX threat indicators
 
-On Windows:
+Stores them in MongoDB
 
-```
-.\venv\Scripts\activate
-```
+Adds trace metadata (for OpenTelemetry)
 
-#### Install dependencies
+Database
 
-```
-pip install -r requirements.txt
-```
+MongoDB (threat storage)
 
-#### Start application
+Tracing
 
-```
-python3 app.py
-```
+OpenTelemetry setup across all 3 services
+
+Traces visualized in OpenObserve
+
