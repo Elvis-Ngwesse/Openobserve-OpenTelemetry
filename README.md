@@ -36,3 +36,18 @@ OpenTelemetry setup across all 3 services
 
 Traces visualized in OpenObserve
 
+
+
+
+
+mongo
+threatintel
+use cyberpulse
+db.threats.countDocuments()
+db.threats.find().limit(3).pretty()
+
+mongosh
+threatintel
+use threatintel
+db.threats.countDocuments()
+db.threats.find().limit(3).pretty()

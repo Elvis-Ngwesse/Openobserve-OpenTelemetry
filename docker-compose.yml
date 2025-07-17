@@ -1,6 +1,15 @@
-version: "3.9"
 
 services:
+  mongo:
+    image: mongo:6
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - otel-net
+
   openobserve:
     image: openobserve/openobserve:latest
     container_name: openobserve
@@ -11,24 +20,36 @@ services:
       - "5080:5080"
     volumes:
       - openobserve-data:/data
-    restart: always
     networks:
-      - otel-network
+      - otel-net
 
-  flask-app:
-    build: .
-    container_name: flask-app
+  ui-app:
+    build: ./app
+    container_name: ui-app
     ports:
-      - "5011:5011"
+      - "5020:5020"
+    env_file:
+      - .env
     networks:
-      - otel-network
-    environment:
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://openobserve:5080/api/default/v1/traces
-      - OTEL_EXPORTER_OTLP_AUTH=Basic cm9vdEBleGFtcGxlLmNvbTpDb21wbGV4cGFzcyMxMjM=
+      - otel-net
+    depends_on:
+      - mongo
+      - fetcher
 
-networks:
-  otel-network:
-    driver: bridge
+  fetcher:
+    build: ./fetcher
+    container_name: fetcher
+    env_file:
+      - .env
+    networks:
+      - otel-net
+    depends_on:
+      - mongo
 
 volumes:
+  mongo-data:
   openobserve-data:
+
+networks:
+  otel-net:
+    driver: bridge

@@ -11,10 +11,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application code
-COPY . .
+COPY . /app
 
 # Expose the port your app runs on
-EXPOSE 5011
+EXPOSE 5020
 
 # Run the app
-CMD ["python", "app.py"]
+CMD ["python", "ui_app.py"]
