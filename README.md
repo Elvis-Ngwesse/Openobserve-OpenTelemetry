@@ -51,3 +51,9 @@ threatintel
 use threatintel
 db.threats.countDocuments()
 db.threats.find().limit(3).pretty()
+
+
+docker-compose build --no-cache
+docker-compose up -d
+
+docker-compose up --build
