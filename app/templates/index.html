@@ -1,13 +1,31 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <title>Cyber Threat Intelligence</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link
+            href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+            rel="stylesheet" />
+    <style>
+        tbody tr:hover {
+            background-color: #f0f8ff;
+            cursor: pointer;
+        }
+        .indicator-cell {
+            font-family: monospace;
+            word-break: break-all;
+        }
+        /* Make sortable table headers look clickable */
+        th.sortable {
+            cursor: pointer;
+        }
+    </style>
 </head>
 <body>
 <div class="container mt-5">
-    <h1 class="mb-4">Recent Threats</h1>
-    <form method="get" class="row g-3">
+    <h1 class="mb-4 text-primary">🛡️ Recent Threats</h1>
+    <form method="get" class="row g-3 mb-4">
         <div class="col-md-4">
             <input
                     name="type"
@@ -22,35 +40,61 @@
                     placeholder="Severity (e.g., high)"
                     value="{{ request.args.get('severity', '') }}">
         </div>
-        <div class="col-md-4">
-            <button class="btn btn-primary w-100" type="submit">Filter</button>
+        <div class="col-md-4 d-grid">
+            <button class="btn btn-success" type="submit">🔍 Filter</button>
         </div>
     </form>
 
-    <table class="table table-hover table-bordered mt-4">
+    <table class="table table-hover table-bordered align-middle sortable">
         <thead class="table-dark">
         <tr>
-            <th>Timestamp</th>
-            <th>Indicator</th>
-            <th>Type</th>
-            <th>Severity</th>
+            <th>🕒 Timestamp</th>
+            <th>📡 Indicator</th>
+            <th>⚠️ Type</th>
+            <th>🔥 Severity</th>
         </tr>
         </thead>
         <tbody>
         {% for t in threats %}
         <tr>
             <td>{{ t.timestamp.strftime('%Y-%m-%d %H:%M:%S') if t.timestamp else 'N/A' }}</td>
-            <td>{{ t.indicator }}</td>
-            <td>{{ t.type }}</td>
-            <td>{{ t.severity }}</td>
+            <td class="indicator-cell">{{ t.indicator }}</td>
+            <td>
+                {% set type_icons = {
+                "ipv4": "🌐",
+                "ipv6": "🌍",
+                "domain": "🔗",
+                "url": "🔗",
+                "email": "✉️",
+                "file": "📁",
+                "hash": "🔒",
+                "malware": "💀",
+                "cve": "🛠️"
+                } %}
+                {{ type_icons.get(t.type.lower(), "❓") }} {{ t.type }}
+            </td>
+            <td>
+                {% if t.severity.lower() == 'high' %}
+                <span class="badge bg-danger">🔥 High</span>
+                {% elif t.severity.lower() == 'medium' %}
+                <span class="badge bg-warning text-dark">⚠️ Medium</span>
+                {% elif t.severity.lower() == 'low' %}
+                <span class="badge bg-info text-dark">ℹ️ Low</span>
+                {% else %}
+                <span class="badge bg-secondary">❓ {{ t.severity }}</span>
+                {% endif %}
+            </td>
         </tr>
         {% else %}
         <tr>
-            <td colspan="4" class="text-center">No threats found</td>
+            <td colspan="4" class="text-center fst-italic text-muted">No threats found 😌</td>
         </tr>
         {% endfor %}
         </tbody>
     </table>
 </div>
+
+<script src="https://cdn.jsdelivr.net/gh/tofsjonas/sortable/sortable.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

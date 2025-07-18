@@ -9,3 +9,4 @@ opentelemetry-instrumentation
 opentelemetry-instrumentation-flask
 python-dotenv
 backoff
+opentelemetry-exporter-otlp-proto-http

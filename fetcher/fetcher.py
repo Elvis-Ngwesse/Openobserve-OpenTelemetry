@@ -19,10 +19,8 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.propagate import inject
 
-# Load .env if present (optional)
 load_dotenv()
 
-# Setup logging
 logging.basicConfig(
     stream=sys.stdout,
     level=logging.INFO,
@@ -30,7 +28,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("threat-fetcher")
 
-# MongoDB Setup
 try:
     MONGO_URI = os.environ["MONGODB_URI"]
 except KeyError:
@@ -39,7 +36,7 @@ except KeyError:
 
 try:
     client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-    client.server_info()  # Test connection
+    client.server_info()
     db = client["threatintel"]
     collection = db["threats"]
     logger.info("✅ Connected to MongoDB successfully.")
@@ -47,21 +44,24 @@ except errors.ServerSelectionTimeoutError as e:
     logger.exception("❌ MongoDB connection failed.")
     sys.exit(1)
 
-# OTX API Key
 try:
     OTX_API_KEY = os.environ["OTX_API_KEY"]
 except KeyError:
     logger.error("❌ OTX_API_KEY environment variable not set.")
     sys.exit(1)
 
-ALIENVAULT_URL = "https://otx.alienvault.com/api/v1/pulses/subscribed"
-HEADERS = {"X-OTX-API-KEY": OTX_API_KEY}
-
-# OpenTelemetry Tracing setup
 try:
-    tracer_provider = TracerProvider(
-        resource=Resource.create({SERVICE_NAME: "threat-fetcher"})
-    )
+    VT_API_KEY = os.environ["VT_API_KEY"]
+except KeyError:
+    logger.error("❌ VT_API_KEY environment variable not set.")
+    sys.exit(1)
+
+ALIENVAULT_URL = "https://otx.alienvault.com/api/v1/pulses/subscribed"
+HEADERS_OTX = {"X-OTX-API-KEY": OTX_API_KEY}
+HEADERS_VT = {"x-apikey": VT_API_KEY}
+
+try:
+    tracer_provider = TracerProvider(resource=Resource.create({SERVICE_NAME: "threat-fetcher"}))
     trace.set_tracer_provider(tracer_provider)
 
     exporter = OTLPSpanExporter(
@@ -76,7 +76,6 @@ except Exception:
     tracer = None
     logger.warning("⚠️ Tracing not initialized")
 
-# Backoff logging callback
 def log_backoff(details):
     logger.warning(f"🔁 Retry #{details['tries']} in {details['wait']:0.1f}s due to {details['target'].__name__}")
 
@@ -86,66 +85,87 @@ def log_backoff(details):
     max_tries=5,
     on_backoff=log_backoff,
 )
-def fetch_threats():
+def fetch_otx_threats():
     with tracer.start_as_current_span("alienvault.pull.threats") if tracer else nullcontext() as span:
         logger.info("📡 Fetching threats from AlienVault OTX...")
 
-        # Inject trace context into headers
-        headers = HEADERS.copy()
+        headers = HEADERS_OTX.copy()
         if tracer:
             inject(headers)
 
-        try:
-            res = requests.get(ALIENVAULT_URL, headers=headers, timeout=10)
-            res.raise_for_status()
-            data = res.json()
+        res = requests.get(ALIENVAULT_URL, headers=headers, timeout=10)
+        res.raise_for_status()
+        data = res.json()
+        logger.info(f"AlienVault IP data: {data}")
 
-            results = data.get("results", [])
-            if span:
-                span.set_attribute("otx.result.count", len(results))
+        results = data.get("results", [])
+        if span:
+            span.set_attribute("otx.result.count", len(results))
 
-            new_count = 0
-            duplicate_count = 0
+        ip_list = []
 
-            for pulse in results:
-                for indicator in pulse.get("indicators", []):
-                    doc = {
-                        "indicator": indicator.get("indicator"),
-                        "type": indicator.get("type"),
-                        "severity": pulse.get("threat_hunting", {}).get("severity", "unknown"),
-                        "timestamp": pulse.get("modified") or datetime.utcnow().isoformat() + "Z",
-                    }
+        for pulse in results:
+            for indicator in pulse.get("indicators", []):
+                if indicator.get("type") == "IPv4":
+                    ip = indicator.get("indicator")
+                    if ip:
+                        ip_list.append(ip)
 
-                    result = collection.update_one(
-                        {"indicator": doc["indicator"], "timestamp": doc["timestamp"]},
-                        {"$setOnInsert": doc},
-                        upsert=True,
-                    )
+        logger.info(f"ℹ️ Extracted {len(ip_list)} IPv4 indicators from OTX.")
+        return ip_list
 
-                    if result.upserted_id:
-                        logger.info(f"✅ New threat: {doc['indicator']}")
-                        new_count += 1
-                    else:
-                        duplicate_count += 1
+@backoff.on_exception(
+    backoff.expo,
+    (requests.RequestException, errors.PyMongoError),
+    max_tries=5,
+    on_backoff=log_backoff,
+)
+def fetch_virustotal_ip(ip):
+    with tracer.start_as_current_span("virustotal.pull.ip") if tracer else nullcontext() as span:
+        logger.info(f"📡 Querying VirusTotal for IP: {ip}")
+        url = f"https://www.virustotal.com/api/v3/ip_addresses/{ip}"
+        res = requests.get(url, headers=HEADERS_VT, timeout=10)
+        res.raise_for_status()
+        data = res.json()
+        logger.info(f"VirusTotal IP data: {data}")
 
-            logger.info(f"🧠 Upserted {new_count} new threats, 💤 Skipped {duplicate_count} duplicates.")
-            if span:
-                span.set_attribute("mongo.inserted", new_count)
-                span.set_attribute("mongo.duplicates", duplicate_count)
+        attributes = data.get("data", {}).get("attributes", {})
+        malicious_count = attributes.get("last_analysis_stats", {}).get("malicious", 0)
+        last_analysis_date = attributes.get("last_analysis_date")
 
-        except requests.RequestException as e:
-            logger.error(f"❌ HTTP {res.status_code if 'res' in locals() else 'ERR'} from OTX: {e}")
-            if span:
-                span.record_exception(e)
-            raise
-        except Exception as e:
-            logger.exception("❌ Unexpected error during fetch")
-            if span:
-                span.record_exception(e)
-            raise
+        doc = {
+            "indicator": ip,
+            "type": "IPv4",
+            "severity": "high" if malicious_count > 0 else "unknown",
+            "timestamp": datetime.utcfromtimestamp(last_analysis_date).isoformat() + "Z" if last_analysis_date else datetime.utcnow().isoformat() + "Z",
+        }
+
+        result = collection.update_one(
+            {"indicator": doc["indicator"], "timestamp": doc["timestamp"]},
+            {"$setOnInsert": doc},
+            upsert=True,
+        )
+
+        if result.upserted_id:
+            logger.info(f"✅ New VirusTotal threat: {doc['indicator']}")
+            return True
+        else:
+            logger.debug(f"ℹ️ Duplicate VirusTotal threat: {doc['indicator']}")
+            return False
+
+def fetch_threats():
+    ip_list = fetch_otx_threats()
+    new_count = 0
+    duplicate_count = 0
+    for ip in ip_list:
+        if fetch_virustotal_ip(ip):
+            new_count += 1
+        else:
+            duplicate_count += 1
+    logger.info(f"🧠 Upserted {new_count} new threats, 💤 Skipped {duplicate_count} duplicates from VirusTotal.")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Threat fetcher from AlienVault OTX")
+    parser = argparse.ArgumentParser(description="Threat fetcher from AlienVault OTX and VirusTotal")
     parser.add_argument("--fetch-now", action="store_true", help="Run once immediately and exit")
     parser.add_argument("--loop-delay", type=int, default=60, help="Polling interval in seconds")
     args = parser.parse_args()

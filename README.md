@@ -63,3 +63,5 @@ docker-compose up -d
 
 
 Get Token
+select data sources
+click on Traces(OpenTelemetry)
