@@ -9,15 +9,24 @@
     <h1 class="mb-4">Recent Threats</h1>
     <form method="get" class="row g-3">
         <div class="col-md-4">
-            <input name="type" class="form-control" placeholder="Threat Type (e.g., malware)">
+            <input
+                    name="type"
+                    class="form-control"
+                    placeholder="Threat Type (e.g., malware)"
+                    value="{{ request.args.get('type', '') }}">
         </div>
         <div class="col-md-4">
-            <input name="severity" class="form-control" placeholder="Severity (e.g., high)">
+            <input
+                    name="severity"
+                    class="form-control"
+                    placeholder="Severity (e.g., high)"
+                    value="{{ request.args.get('severity', '') }}">
         </div>
         <div class="col-md-4">
-            <button class="btn btn-primary w-100">Filter</button>
+            <button class="btn btn-primary w-100" type="submit">Filter</button>
         </div>
     </form>
+
     <table class="table table-hover table-bordered mt-4">
         <thead class="table-dark">
         <tr>
@@ -30,10 +39,14 @@
         <tbody>
         {% for t in threats %}
         <tr>
-            <td>{{ t.timestamp }}</td>
+            <td>{{ t.timestamp.strftime('%Y-%m-%d %H:%M:%S') if t.timestamp else 'N/A' }}</td>
             <td>{{ t.indicator }}</td>
             <td>{{ t.type }}</td>
             <td>{{ t.severity }}</td>
+        </tr>
+        {% else %}
+        <tr>
+            <td colspan="4" class="text-center">No threats found</td>
         </tr>
         {% endfor %}
         </tbody>

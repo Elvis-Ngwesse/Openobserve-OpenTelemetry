@@ -17,6 +17,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.propagate import inject
 
 # Load .env if present (optional)
 load_dotenv()
@@ -83,14 +84,19 @@ def log_backoff(details):
     backoff.expo,
     (requests.RequestException, errors.PyMongoError),
     max_tries=5,
-    on_backoff=log_backoff,   # <-- Pass callback here
+    on_backoff=log_backoff,
 )
 def fetch_threats():
     with tracer.start_as_current_span("alienvault.pull.threats") if tracer else nullcontext() as span:
         logger.info("📡 Fetching threats from AlienVault OTX...")
 
+        # Inject trace context into headers
+        headers = HEADERS.copy()
+        if tracer:
+            inject(headers)
+
         try:
-            res = requests.get(ALIENVAULT_URL, headers=HEADERS, timeout=10)
+            res = requests.get(ALIENVAULT_URL, headers=headers, timeout=10)
             res.raise_for_status()
             data = res.json()
 
@@ -110,7 +116,6 @@ def fetch_threats():
                         "timestamp": pulse.get("modified") or datetime.utcnow().isoformat() + "Z",
                     }
 
-                    # Upsert threat indicator
                     result = collection.update_one(
                         {"indicator": doc["indicator"], "timestamp": doc["timestamp"]},
                         {"$setOnInsert": doc},
