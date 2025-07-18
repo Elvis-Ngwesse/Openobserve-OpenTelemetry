@@ -9,20 +9,20 @@ from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.flask import FlaskInstrumentor
-from contextlib import nullcontext  # For fallback span context
+from contextlib import nullcontext
 from datetime import datetime
 
-# Setup logging
+# 🎯 Logging setup
 logging.basicConfig(
     stream=sys.stdout,
-    level=logging.DEBUG,
-    format="%(asctime)s %(levelname)s:%(name)s:%(message)s",
+    level=logging.INFO,
+    format="%(asctime)s 🌐 %(levelname)s | %(name)s | %(message)s",
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("ui-app")
 
-# Setup OpenTelemetry tracing
+# 🚀 Tracing setup
 try:
-    logger.debug("Initializing OpenTelemetry tracer provider")
+    logger.debug("⚙️ Initializing OpenTelemetry tracer provider...")
     resource = Resource(attributes={SERVICE_NAME: "ui-app"})
     tracer_provider = TracerProvider(resource=resource)
 
@@ -38,24 +38,24 @@ try:
     tracer_provider.add_span_processor(span_processor)
     trace.set_tracer_provider(tracer_provider)
     tracer = trace.get_tracer(__name__)
-    logger.info("Tracing initialized successfully")
+    logger.info("🛰️ Tracing initialized successfully")
 
 except Exception:
-    logger.exception("Failed to initialize OpenTelemetry tracing")
-    tracer = None  # Defensive fallback
+    logger.exception("❌ Failed to initialize OpenTelemetry tracing")
+    tracer = None
 
-# Flask app setup
+# 🐍 Flask setup
 app = Flask(__name__)
 FlaskInstrumentor().instrument_app(app)
 
-# MongoDB config
+# 🗄️ MongoDB setup
 MONGO_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
 MONGO_DB = os.getenv("MONGODB_DB", "threatintel")
 MONGO_COLLECTION = os.getenv("MONGODB_COLLECTION", "threats")
 
-
 def get_mongo_client(uri):
     try:
+        logger.info(f"📡 Connecting to MongoDB at {uri}")
         client = MongoClient(uri)
         logger.info("✅ Connected to MongoDB")
         return client
@@ -63,15 +63,13 @@ def get_mongo_client(uri):
         logger.error(f"❌ MongoDB connection failed: {e}")
         return None
 
-
 mongo_client = get_mongo_client(MONGO_URI)
 if not mongo_client:
-    logger.error("Exiting because MongoDB client could not be created")
+    logger.critical("💥 Exiting — MongoDB client could not be created.")
     sys.exit(1)
 
 db = mongo_client[MONGO_DB]
 collection = db[MONGO_COLLECTION]
-
 
 @app.route("/")
 def index():
@@ -84,23 +82,33 @@ def index():
     if severity:
         query["severity"] = severity
 
-    span_ctx = tracer.start_as_current_span("fetch-threats-ui") if tracer else nullcontext()
+    span_name = "query_threats"
+    if threat_type and severity:
+        span_name += "_type_severity"
+    elif threat_type:
+        span_name += "_type"
+    elif severity:
+        span_name += "_severity"
+
+    span_ctx = tracer.start_as_current_span(span_name) if tracer else nullcontext()
 
     with span_ctx as span:
-        logger.debug(f"Fetching threats with query: {query}")
+        logger.info(f"🔍 Searching for threats with: {query}")
+
+        if span:
+            span.set_attribute("query.type", threat_type or "any")
+            span.set_attribute("query.severity", severity or "any")
+            span.set_attribute("collection", MONGO_COLLECTION)
+
         try:
-            raw_threats = collection.find(query).sort("timestamp", -1).limit(20)
+            with tracer.start_as_current_span("mongo_query") if tracer else nullcontext():
+                raw_threats = collection.find(query).sort("timestamp", -1).limit(20)
+
             threats = []
             for doc in raw_threats:
                 ts = doc.get("timestamp")
-                # Try parsing timestamp to datetime object
                 try:
-                    if ts:
-                        # Mongo stores ISO 8601 strings like "2025-07-17T10:39:46.042Z"
-                        # Python datetime expects "+00:00" instead of "Z" for UTC offset
-                        parsed_ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                    else:
-                        parsed_ts = None
+                    parsed_ts = datetime.fromisoformat(ts.replace("Z", "+00:00")) if ts else None
                 except Exception:
                     parsed_ts = None
 
@@ -112,9 +120,13 @@ def index():
                         "severity": doc.get("severity", "N/A"),
                     }
                 )
-            logger.info(f"Fetched {len(threats)} threats")
+
+            logger.info(f"🧠 Retrieved {len(threats)} threats from MongoDB")
+            if span:
+                span.set_attribute("result.count", len(threats))
+
         except Exception as e:
-            logger.exception("Error fetching threats from MongoDB")
+            logger.exception("❗ Error fetching threats from MongoDB")
             if span:
                 span.record_exception(e)
             threats = []
@@ -123,8 +135,8 @@ def index():
 
 
 if __name__ == "__main__":
-    logger.info("Starting Flask UI app on port 5020")
+    logger.info("🚀 Starting Flask UI app on port 5020")
     try:
         app.run(debug=True, port=5020, host="0.0.0.0", use_reloader=False)
     except Exception:
-        logger.exception("Failed to start Flask app")
+        logger.exception("❌ Failed to start Flask app")

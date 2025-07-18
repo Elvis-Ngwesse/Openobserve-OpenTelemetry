@@ -16,6 +16,7 @@ services:
     environment:
       ZO_ROOT_USER_EMAIL: "root@gmail.com"
       ZO_ROOT_USER_PASSWORD: "admin"
+      ZO_AUTH_ENABLED: "false"
     ports:
       - "5080:5080"
     volumes:

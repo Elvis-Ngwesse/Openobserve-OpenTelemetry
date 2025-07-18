@@ -55,5 +55,11 @@ db.threats.find().limit(3).pretty()
 
 docker-compose build --no-cache
 docker-compose up -d
-
 docker-compose up --build
+
+
+docker-compose down
+docker-compose up -d
+
+
+Get Token
