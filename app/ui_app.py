@@ -1,7 +1,7 @@
 import logging
 import sys
 import os
-import psutil  # ✅ for CPU and memory usage
+import psutil
 
 from flask import Flask, render_template, request
 from pymongo import MongoClient
@@ -16,7 +16,6 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 
-# For logging exporter
 from opentelemetry._logs import set_logger_provider
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
@@ -24,12 +23,10 @@ from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
 
 from contextlib import nullcontext
 from datetime import datetime
-
-# ------------- Custom OTEL Log Formatter to add trace info -------------
-
 from opentelemetry.trace import get_current_span
 
-SERVICE = "ui-app"  # Your service name, same as OTEL resource
+SERVICE = "ui-app"
+STREAM_NAME = os.getenv("OTEL_STREAM_NAME")
 
 class OTELLogFormatter(logging.Formatter):
     def format(self, record):
@@ -45,18 +42,16 @@ class OTELLogFormatter(logging.Formatter):
         record.trace_id = trace_id or "no-trace"
         record.span_id = span_id or "no-span"
         record.service_name = SERVICE
+        record.stream_name = STREAM_NAME
 
-        # Inject our custom format including trace info
         fmt_orig = self._style._fmt
         self._style._fmt = (
             f"%(asctime)s 🌐 %(levelname)s | %(name)s | "
-            f"[service={record.service_name} trace_id={record.trace_id} span_id={record.span_id}] | %(message)s"
+            f"[service={record.service_name} stream={record.stream_name} trace_id={record.trace_id} span_id={record.span_id}] | %(message)s"
         )
         result = super().format(record)
         self._style._fmt = fmt_orig
         return result
-
-# -------------------- Setup logging --------------------
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -66,17 +61,15 @@ console_formatter = OTELLogFormatter()
 console_handler.setFormatter(console_formatter)
 logger.addHandler(console_handler)
 
-# ----------------- Setup OpenTelemetry Log Exporter ------------------
-
 try:
     log_exporter = OTLPLogExporter(
         endpoint=os.getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"),
         headers={
             "Authorization": os.getenv("OTEL_EXPORTER_OTLP_AUTH"),
-            "stream-name": os.getenv("OTEL_LOG_STREAM", "default")
+            "stream-name": STREAM_NAME,
         }
     )
-    logger_provider = LoggerProvider(resource=Resource.create({SERVICE_NAME: SERVICE}))
+    logger_provider = LoggerProvider(resource=Resource.create({SERVICE_NAME: SERVICE, "stream.name": STREAM_NAME}))
     logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
     set_logger_provider(logger_provider)
 
@@ -88,14 +81,12 @@ try:
 except Exception as e:
     logger.error(f"⚠️ Failed to initialize OpenTelemetry log exporter: {e}")
 
-# ----------------- Tracing setup ---------------------
-
 try:
-    resource = Resource(attributes={SERVICE_NAME: SERVICE})
+    resource = Resource.create({SERVICE_NAME: SERVICE, "stream.name": STREAM_NAME})
     tracer_provider = TracerProvider(resource=resource)
     exporter = OTLPSpanExporter(
-        endpoint=os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"),
-        headers={"Authorization": os.environ.get("OTEL_EXPORTER_OTLP_AUTH")},
+        endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+        headers={"Authorization": os.getenv("OTEL_EXPORTER_OTLP_AUTH")},
     )
     span_processor = BatchSpanProcessor(exporter)
     tracer_provider.add_span_processor(span_processor)
@@ -105,8 +96,6 @@ try:
 except Exception:
     tracer = None
     logger.warning("⚠️ Tracing not initialized")
-
-# ----------------- Metrics setup ---------------------
 
 try:
     metric_exporter = OTLPMetricExporter(
@@ -130,7 +119,6 @@ try:
         name="http_requests_total",
         description="Total number of HTTP requests served",
     )
-
     logger.info("📈 Metrics initialized successfully")
 except Exception:
     meter = None
@@ -139,8 +127,6 @@ except Exception:
     http_requests_counter = None
     logger.warning("⚠️ Metrics not initialized")
 
-# ----------------- Metrics recording helper ---------------------
-
 def record_metrics():
     if not meter:
         return
@@ -148,20 +134,16 @@ def record_metrics():
     mem = psutil.Process().memory_info().rss / 1024 / 1024
     logger.debug(f"📊 CPU: {cpu}%, Memory: {mem:.2f}MB")
     if cpu_usage_counter:
-        cpu_usage_counter.add(cpu, {"service.name": SERVICE})
+        cpu_usage_counter.add(cpu, {"service.name": SERVICE, "stream.name": STREAM_NAME})
     if memory_usage_counter:
-        memory_usage_counter.add(mem, {"service.name": SERVICE})
-
-# ----------------- Flask app ---------------------
+        memory_usage_counter.add(mem, {"service.name": SERVICE, "stream.name": STREAM_NAME})
 
 app = Flask(__name__)
 FlaskInstrumentor().instrument_app(app)
 
-# MongoDB setup
 MONGO_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
 MONGO_DB = os.getenv("MONGODB_DB", "threatintel")
 MONGO_COLLECTION = os.getenv("MONGODB_COLLECTION", "threats")
-
 
 def get_mongo_client(uri):
     try:
@@ -173,7 +155,6 @@ def get_mongo_client(uri):
         logger.error(f"❌ MongoDB connection failed: {e}")
         return None
 
-
 mongo_client = get_mongo_client(MONGO_URI)
 if not mongo_client:
     logger.critical("💥 Exiting — MongoDB client could not be created.")
@@ -182,13 +163,12 @@ if not mongo_client:
 db = mongo_client[MONGO_DB]
 collection = db[MONGO_COLLECTION]
 
-
 @app.route("/")
 def index():
     record_metrics()
 
     if http_requests_counter:
-        http_requests_counter.add(1, {"service.name": SERVICE})
+        http_requests_counter.add(1, {"service.name": SERVICE, "stream.name": STREAM_NAME})
         logger.debug("➡️ Incremented HTTP request counter")
 
     threat_type = request.args.get("type")
@@ -214,6 +194,7 @@ def index():
         logger.info(f"🔍 Searching for threats with: {query}")
         if span:
             span.set_attribute("service.name", SERVICE)
+            span.set_attribute("stream.name", STREAM_NAME)
             span.set_attribute("query.type", threat_type or "any")
             span.set_attribute("query.severity", severity or "any")
             span.set_attribute("collection", MONGO_COLLECTION)
@@ -222,6 +203,7 @@ def index():
             with (tracer.start_as_current_span("mongo_query") if tracer else nullcontext()) as mongo_span:
                 if mongo_span:
                     mongo_span.set_attribute("service.name", SERVICE)
+                    mongo_span.set_attribute("stream.name", STREAM_NAME)
                     mongo_span.set_attribute("db.system", "mongodb")
                     mongo_span.set_attribute("db.operation", "find")
                     mongo_span.set_attribute("db.mongodb.collection", MONGO_COLLECTION)
@@ -257,11 +239,9 @@ def index():
 
         return render_template("index.html", threats=threats)
 
-
 @app.route("/health")
 def health():
     return {"status": "ok"}, 200
-
 
 if __name__ == "__main__":
     logger.info("🚀 Starting Flask UI app on port 5020")

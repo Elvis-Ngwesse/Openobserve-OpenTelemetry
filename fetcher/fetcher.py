@@ -23,22 +23,17 @@ from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.propagate import inject
 
-# 🆕 Log exporter imports
 from opentelemetry._logs import set_logger_provider
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
 
-# For injecting trace info into logs
 from opentelemetry.trace import get_current_span
 
-# 🌍 Load environment
 load_dotenv()
 
-# ------------------ Constants -------------------
 SERVICE_NAME_STR = "threat-fetcher"
-
-# ------------- Custom OTEL Log Formatter to add trace info -------------
+STREAM_NAME = os.getenv("OTEL_STREAM_NAME")
 
 class OTELLogFormatter(logging.Formatter):
     def format(self, record):
@@ -54,18 +49,19 @@ class OTELLogFormatter(logging.Formatter):
         record.trace_id = trace_id or "no-trace"
         record.span_id = span_id or "no-span"
         record.service_name = SERVICE_NAME_STR
+        record.stream_name = STREAM_NAME
 
         fmt_orig = self._style._fmt
         self._style._fmt = (
             f"%(asctime)s 🌐 %(levelname)s | %(message)s | "
-            f"[service={record.service_name} trace_id={record.trace_id} span_id={record.span_id}]"
+            f"[service={record.service_name} stream={record.stream_name} trace_id={record.trace_id} span_id={record.span_id}]"
         )
         result = super().format(record)
         self._style._fmt = fmt_orig
         return result
 
 
-# ——— Logging Setup ———
+# Logging Setup
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -74,16 +70,15 @@ console_formatter = OTELLogFormatter()
 console_handler.setFormatter(console_formatter)
 logger.addHandler(console_handler)
 
-# OpenTelemetry Log Exporter setup
 try:
     log_exporter = OTLPLogExporter(
         endpoint=os.getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"),
         headers={
             "Authorization": os.getenv("OTEL_EXPORTER_OTLP_AUTH"),
-            "stream-name": os.getenv("OTEL_LOG_STREAM", "default"),
+            "stream-name": STREAM_NAME,
         }
     )
-    logger_provider = LoggerProvider(resource=Resource.create({SERVICE_NAME: SERVICE_NAME_STR}))
+    logger_provider = LoggerProvider(resource=Resource.create({SERVICE_NAME: SERVICE_NAME_STR, "stream.name": STREAM_NAME}))
     logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
     set_logger_provider(logger_provider)
 
@@ -95,7 +90,7 @@ try:
 except Exception as e:
     logger.error(f"⚠️ Failed to initialize OpenTelemetry log exporter: {e}")
 
-# -------------------- MongoDB Setup --------------------
+# MongoDB Setup
 try:
     MONGO_URI = os.environ["MONGODB_URI"]
     client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
@@ -107,7 +102,7 @@ except Exception:
     logger.exception("❌ MongoDB connection failed.")
     sys.exit(1)
 
-# -------------------- API Keys --------------------
+# API Keys
 try:
     OTX_API_KEY = os.environ["OTX_API_KEY"]
     VT_API_KEY = os.environ["VT_API_KEY"]
@@ -119,9 +114,13 @@ ALIENVAULT_URL = "https://otx.alienvault.com/api/v1/pulses/subscribed"
 HEADERS_OTX = {"X-OTX-API-KEY": OTX_API_KEY}
 HEADERS_VT = {"x-apikey": VT_API_KEY}
 
-# ------------------ Tracing Setup ------------------
+# Tracing Setup
 try:
-    tracer_provider = TracerProvider(resource=Resource.create({SERVICE_NAME: SERVICE_NAME_STR}))
+    resource = Resource.create({
+        SERVICE_NAME: SERVICE_NAME_STR,
+        "stream.name": STREAM_NAME
+    })
+    tracer_provider = TracerProvider(resource=resource)
     trace.set_tracer_provider(tracer_provider)
 
     trace_exporter = OTLPSpanExporter(
@@ -136,7 +135,7 @@ except Exception:
     tracer = None
     logger.warning("⚠️ Tracing not initialized")
 
-# ------------------ Metrics Setup ------------------
+# Metrics Setup
 try:
     metric_exporter = OTLPMetricExporter(
         endpoint=os.getenv("OTEL_EXPORTER_OTLP_METRIC_ENDPOINT"),
@@ -162,25 +161,22 @@ except Exception:
     logger.warning("⚠️ Metrics not initialized")
 
 
-# ------------------ Backoff logging ------------------
 def log_backoff(details):
     logger.warning(f"🔁 Retry #{details['tries']} in {details['wait']:.1f}s due to {details['target'].__name__}")
 
 
-# ------------------ Record resource metrics ------------------
 def record_metrics():
     if not meter:
         return
     cpu = psutil.cpu_percent(interval=None)
     mem = psutil.Process().memory_info().rss / 1024 / 1024
     if cpu_usage_counter:
-        cpu_usage_counter.add(cpu, {"service.name": SERVICE_NAME_STR})
+        cpu_usage_counter.add(cpu, {"service.name": SERVICE_NAME_STR, "stream.name": STREAM_NAME})
     if memory_usage_counter:
-        memory_usage_counter.add(mem, {"service.name": SERVICE_NAME_STR})
+        memory_usage_counter.add(mem, {"service.name": SERVICE_NAME_STR, "stream.name": STREAM_NAME})
     logger.info(f"📊 CPU: {cpu}%, Memory: {mem:.2f} MB")
 
 
-# ------------------ Fetch OTX indicators ------------------
 @backoff.on_exception(backoff.expo, (requests.RequestException, errors.PyMongoError), max_tries=5,
                       on_backoff=log_backoff)
 def fetch_otx_threats():
@@ -209,10 +205,10 @@ def fetch_otx_threats():
         if span:
             span.set_attribute("otx.indicator.count", len(indicators))
             span.set_attribute("service.name", SERVICE_NAME_STR)
+            span.set_attribute("stream.name", STREAM_NAME)
         return indicators
 
 
-# ------------------ Main logic: insert only new indicators ------------------
 def fetch_threats():
     record_metrics()
     indicators = fetch_otx_threats()
@@ -229,9 +225,9 @@ def fetch_threats():
             logger.info(f"✅ Inserted: {item['indicator']} ({item['type']})")
             new_count += 1
             if insert_counter:
-                insert_counter.add(1, {"service.name": SERVICE_NAME_STR, "type": item["type"]})
+                insert_counter.add(1, {"service.name": SERVICE_NAME_STR, "stream.name": STREAM_NAME, "type": item["type"]})
             if otx_indicator_counter:
-                otx_indicator_counter.add(1, {"service.name": SERVICE_NAME_STR, "type": item["type"]})
+                otx_indicator_counter.add(1, {"service.name": SERVICE_NAME_STR, "stream.name": STREAM_NAME, "type": item["type"]})
         else:
             duplicate_count += 1
 
@@ -241,7 +237,6 @@ def fetch_threats():
         logger.info("📤 Metrics manually exported.")
 
 
-# ------------------ Entry point ------------------
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Threat fetcher from AlienVault OTX")
     parser.add_argument("--fetch-now", action="store_true", help="Run once immediately and exit")
