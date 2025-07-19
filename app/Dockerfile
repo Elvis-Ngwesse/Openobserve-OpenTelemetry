@@ -17,4 +17,4 @@ COPY . /app
 EXPOSE 5020
 
 # Run the app
-CMD ["python", "ui_app.py"]
+CMD ["python", "app.py"]

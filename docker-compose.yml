@@ -24,9 +24,9 @@ services:
     networks:
       - otel-net
 
-  ui-app:
+  threats-app:
     build: ./app
-    container_name: ui-app
+    container_name: threats-app
     ports:
       - "5020:5020"
     env_file:
@@ -35,11 +35,11 @@ services:
       - otel-net
     depends_on:
       - mongo
-      - fetcher
+      - fetcher-app
 
-  fetcher:
+  fetcher-app:
     build: ./fetcher
-    container_name: fetcher
+    container_name: fetcher-app
     env_file:
       - .env
     networks:
