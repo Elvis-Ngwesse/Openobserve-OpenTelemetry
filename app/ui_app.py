@@ -1,7 +1,7 @@
 import logging
 import sys
 import os
-import psutil  # ✅ NEW: for CPU and memory usage
+import psutil  # ✅ for CPU and memory usage
 
 from flask import Flask, render_template, request
 from pymongo import MongoClient
@@ -16,20 +16,82 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 
+# For logging exporter
+from opentelemetry._logs import set_logger_provider
+from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+
 from contextlib import nullcontext
 from datetime import datetime
 
-# 🎯 Logging setup
-logging.basicConfig(
-    stream=sys.stdout,
-    level=logging.INFO,
-    format="%(asctime)s 🌐 %(levelname)s | %(name)s | %(message)s",
-)
-logger = logging.getLogger("ui-app")
+# ------------- Custom OTEL Log Formatter to add trace info -------------
 
-# 🚀 Tracing setup
+from opentelemetry.trace import get_current_span
+
+SERVICE = "ui-app"  # Your service name, same as OTEL resource
+
+class OTELLogFormatter(logging.Formatter):
+    def format(self, record):
+        span = get_current_span()
+        span_context = span.get_span_context() if span else None
+
+        trace_id = None
+        span_id = None
+        if span_context and span_context.trace_id != 0:
+            trace_id = format(span_context.trace_id, "032x")
+            span_id = format(span_context.span_id, "016x")
+
+        record.trace_id = trace_id or "no-trace"
+        record.span_id = span_id or "no-span"
+        record.service_name = SERVICE
+
+        # Inject our custom format including trace info
+        fmt_orig = self._style._fmt
+        self._style._fmt = (
+            f"%(asctime)s 🌐 %(levelname)s | %(name)s | "
+            f"[service={record.service_name} trace_id={record.trace_id} span_id={record.span_id}] | %(message)s"
+        )
+        result = super().format(record)
+        self._style._fmt = fmt_orig
+        return result
+
+# -------------------- Setup logging --------------------
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+console_handler = logging.StreamHandler(sys.stdout)
+console_formatter = OTELLogFormatter()
+console_handler.setFormatter(console_formatter)
+logger.addHandler(console_handler)
+
+# ----------------- Setup OpenTelemetry Log Exporter ------------------
+
 try:
-    resource = Resource(attributes={SERVICE_NAME: "ui-app"})
+    log_exporter = OTLPLogExporter(
+        endpoint=os.getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"),
+        headers={
+            "Authorization": os.getenv("OTEL_EXPORTER_OTLP_AUTH"),
+            "stream-name": os.getenv("OTEL_LOG_STREAM", "default")
+        }
+    )
+    logger_provider = LoggerProvider(resource=Resource.create({SERVICE_NAME: SERVICE}))
+    logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
+    set_logger_provider(logger_provider)
+
+    otel_log_handler = LoggingHandler(level=logging.INFO, logger_provider=logger_provider)
+    otel_log_handler.setFormatter(console_formatter)
+    logger.addHandler(otel_log_handler)
+
+    logger.info("📝 OpenTelemetry Log Exporter initialized successfully.")
+except Exception as e:
+    logger.error(f"⚠️ Failed to initialize OpenTelemetry log exporter: {e}")
+
+# ----------------- Tracing setup ---------------------
+
+try:
+    resource = Resource(attributes={SERVICE_NAME: SERVICE})
     tracer_provider = TracerProvider(resource=resource)
     exporter = OTLPSpanExporter(
         endpoint=os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"),
@@ -44,7 +106,8 @@ except Exception:
     tracer = None
     logger.warning("⚠️ Tracing not initialized")
 
-# 📈 Metrics setup
+# ----------------- Metrics setup ---------------------
+
 try:
     metric_exporter = OTLPMetricExporter(
         endpoint=os.getenv("OTEL_EXPORTER_OTLP_METRIC_ENDPOINT", "http://openobserve:5080/api/default/v1/metrics"),
@@ -53,7 +116,7 @@ try:
     metric_reader = PeriodicExportingMetricReader(metric_exporter, export_interval_millis=5000)
     meter_provider = MeterProvider(metric_readers=[metric_reader])
     metrics.set_meter_provider(meter_provider)
-    meter = metrics.get_meter("ui-app")
+    meter = metrics.get_meter(SERVICE)
 
     cpu_usage_counter = meter.create_counter(
         name="cpu_usage_percent",
@@ -77,7 +140,8 @@ except Exception:
     logger.warning("⚠️ Metrics not initialized")
 
 
-# 🔄 Function to record system metrics
+# ----------------- Metrics recording helper ---------------------
+
 def record_metrics():
     if not meter:
         return
@@ -90,11 +154,14 @@ def record_metrics():
         memory_usage_counter.add(mem)
 
 
-# 🐍 Flask setup
+# ----------------- Flask app ---------------------
+
+from flask import Flask, render_template, request
+
 app = Flask(__name__)
 FlaskInstrumentor().instrument_app(app)
 
-# 🗄️ MongoDB setup
+# MongoDB setup
 MONGO_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
 MONGO_DB = os.getenv("MONGODB_DB", "threatintel")
 MONGO_COLLECTION = os.getenv("MONGODB_COLLECTION", "threats")
@@ -122,7 +189,7 @@ collection = db[MONGO_COLLECTION]
 
 @app.route("/")
 def index():
-    record_metrics()  # ✅ NEW: Log metrics on each page load
+    record_metrics()
 
     if http_requests_counter:
         http_requests_counter.add(1)
