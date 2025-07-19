@@ -32,9 +32,9 @@ from opentelemetry.trace import get_current_span
 
 load_dotenv()
 
-SERVICE_NAME_STR = "threat-fetcher"
+SERVICE_NAME_FETCHER = os.getenv("SERVICE_NAME_FETCHER")
 STREAM_NAME = os.getenv("OTEL_STREAM_NAME")
-
+ALIENVAULT_URL = os.getenv("ALIENVAULT_URL")
 class OTELLogFormatter(logging.Formatter):
     def format(self, record):
         span = get_current_span()
@@ -48,13 +48,14 @@ class OTELLogFormatter(logging.Formatter):
 
         record.trace_id = trace_id or "no-trace"
         record.span_id = span_id or "no-span"
-        record.service_name = SERVICE_NAME_STR
+        record.service_name = SERVICE_NAME_FETCHER
         record.stream_name = STREAM_NAME
 
         fmt_orig = self._style._fmt
         self._style._fmt = (
             f"%(asctime)s 🌐 %(levelname)s | %(message)s | "
-            f"[service={record.service_name} stream={record.stream_name} trace_id={record.trace_id} span_id={record.span_id}]"
+            f"[service={record.service_name} stream={record.stream_name} trace_id={record.trace_id} "
+            f"span_id={record.span_id}]"
         )
         result = super().format(record)
         self._style._fmt = fmt_orig
@@ -78,7 +79,8 @@ try:
             "stream-name": STREAM_NAME,
         }
     )
-    logger_provider = LoggerProvider(resource=Resource.create({SERVICE_NAME: SERVICE_NAME_STR, "stream.name": STREAM_NAME}))
+    logger_provider = LoggerProvider(resource=Resource.create({SERVICE_NAME: SERVICE_NAME_FETCHER,
+                                                               "stream.name": STREAM_NAME}))
     logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
     set_logger_provider(logger_provider)
 
@@ -110,14 +112,14 @@ except KeyError as e:
     logger.error(f"❌ Missing environment variable: {e}")
     sys.exit(1)
 
-ALIENVAULT_URL = "https://otx.alienvault.com/api/v1/pulses/subscribed"
+
 HEADERS_OTX = {"X-OTX-API-KEY": OTX_API_KEY}
 HEADERS_VT = {"x-apikey": VT_API_KEY}
 
 # Tracing Setup
 try:
     resource = Resource.create({
-        SERVICE_NAME: SERVICE_NAME_STR,
+        SERVICE_NAME: SERVICE_NAME_FETCHER,
         "stream.name": STREAM_NAME
     })
     tracer_provider = TracerProvider(resource=resource)
@@ -129,7 +131,7 @@ try:
     )
     span_processor = BatchSpanProcessor(trace_exporter)
     tracer_provider.add_span_processor(span_processor)
-    tracer = trace.get_tracer(SERVICE_NAME_STR)
+    tracer = trace.get_tracer(SERVICE_NAME_FETCHER)
     logger.info("🛰️ Tracing initialized")
 except Exception:
     tracer = None
@@ -144,7 +146,7 @@ try:
     metric_reader = PeriodicExportingMetricReader(metric_exporter, export_interval_millis=60000)
     meter_provider = MeterProvider(metric_readers=[metric_reader])
     metrics.set_meter_provider(meter_provider)
-    meter = metrics.get_meter(SERVICE_NAME_STR)
+    meter = metrics.get_meter(SERVICE_NAME_FETCHER)
 
     otx_indicator_counter = meter.create_counter("otx_indicators_total", description="Indicators fetched")
     cpu_usage_counter = meter.create_counter("cpu_usage_percent", description="CPU usage %")
@@ -171,9 +173,9 @@ def record_metrics():
     cpu = psutil.cpu_percent(interval=None)
     mem = psutil.Process().memory_info().rss / 1024 / 1024
     if cpu_usage_counter:
-        cpu_usage_counter.add(cpu, {"service.name": SERVICE_NAME_STR, "stream.name": STREAM_NAME})
+        cpu_usage_counter.add(cpu, {"service.name": SERVICE_NAME_FETCHER, "stream.name": STREAM_NAME})
     if memory_usage_counter:
-        memory_usage_counter.add(mem, {"service.name": SERVICE_NAME_STR, "stream.name": STREAM_NAME})
+        memory_usage_counter.add(mem, {"service.name": SERVICE_NAME_FETCHER, "stream.name": STREAM_NAME})
     logger.info(f"📊 CPU: {cpu}%, Memory: {mem:.2f} MB")
 
 
@@ -204,7 +206,7 @@ def fetch_otx_threats():
         logger.info(f"ℹ️ Extracted {len(indicators)} indicators from OTX.")
         if span:
             span.set_attribute("otx.indicator.count", len(indicators))
-            span.set_attribute("service.name", SERVICE_NAME_STR)
+            span.set_attribute("service.name", SERVICE_NAME_FETCHER)
             span.set_attribute("stream.name", STREAM_NAME)
         return indicators
 
@@ -225,9 +227,11 @@ def fetch_threats():
             logger.info(f"✅ Inserted: {item['indicator']} ({item['type']})")
             new_count += 1
             if insert_counter:
-                insert_counter.add(1, {"service.name": SERVICE_NAME_STR, "stream.name": STREAM_NAME, "type": item["type"]})
+                insert_counter.add(1, {"service.name": SERVICE_NAME_FETCHER, "stream.name": STREAM_NAME,
+                                       "type": item["type"]})
             if otx_indicator_counter:
-                otx_indicator_counter.add(1, {"service.name": SERVICE_NAME_STR, "stream.name": STREAM_NAME, "type": item["type"]})
+                otx_indicator_counter.add(1, {"service.name": SERVICE_NAME_FETCHER, "stream.name": STREAM_NAME,
+                                              "type": item["type"]})
         else:
             duplicate_count += 1
 
