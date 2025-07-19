@@ -139,7 +139,6 @@ except Exception:
     http_requests_counter = None
     logger.warning("⚠️ Metrics not initialized")
 
-
 # ----------------- Metrics recording helper ---------------------
 
 def record_metrics():
@@ -149,14 +148,11 @@ def record_metrics():
     mem = psutil.Process().memory_info().rss / 1024 / 1024
     logger.debug(f"📊 CPU: {cpu}%, Memory: {mem:.2f}MB")
     if cpu_usage_counter:
-        cpu_usage_counter.add(cpu)
+        cpu_usage_counter.add(cpu, {"service.name": SERVICE})
     if memory_usage_counter:
-        memory_usage_counter.add(mem)
-
+        memory_usage_counter.add(mem, {"service.name": SERVICE})
 
 # ----------------- Flask app ---------------------
-
-from flask import Flask, render_template, request
 
 app = Flask(__name__)
 FlaskInstrumentor().instrument_app(app)
@@ -192,7 +188,7 @@ def index():
     record_metrics()
 
     if http_requests_counter:
-        http_requests_counter.add(1)
+        http_requests_counter.add(1, {"service.name": SERVICE})
         logger.debug("➡️ Incremented HTTP request counter")
 
     threat_type = request.args.get("type")
@@ -217,12 +213,19 @@ def index():
     with span_ctx as span:
         logger.info(f"🔍 Searching for threats with: {query}")
         if span:
+            span.set_attribute("service.name", SERVICE)
             span.set_attribute("query.type", threat_type or "any")
             span.set_attribute("query.severity", severity or "any")
             span.set_attribute("collection", MONGO_COLLECTION)
 
         try:
-            with tracer.start_as_current_span("mongo_query") if tracer else nullcontext():
+            with (tracer.start_as_current_span("mongo_query") if tracer else nullcontext()) as mongo_span:
+                if mongo_span:
+                    mongo_span.set_attribute("service.name", SERVICE)
+                    mongo_span.set_attribute("db.system", "mongodb")
+                    mongo_span.set_attribute("db.operation", "find")
+                    mongo_span.set_attribute("db.mongodb.collection", MONGO_COLLECTION)
+
                 raw_threats = collection.find(query).sort("timestamp", -1).limit(20)
 
             threats = []

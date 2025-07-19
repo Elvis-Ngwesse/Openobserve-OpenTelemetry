@@ -173,8 +173,10 @@ def record_metrics():
         return
     cpu = psutil.cpu_percent(interval=None)
     mem = psutil.Process().memory_info().rss / 1024 / 1024
-    cpu_usage_counter.add(cpu) if cpu_usage_counter else None
-    memory_usage_counter.add(mem) if memory_usage_counter else None
+    if cpu_usage_counter:
+        cpu_usage_counter.add(cpu, {"service.name": SERVICE_NAME_STR})
+    if memory_usage_counter:
+        memory_usage_counter.add(mem, {"service.name": SERVICE_NAME_STR})
     logger.info(f"📊 CPU: {cpu}%, Memory: {mem:.2f} MB")
 
 
@@ -206,6 +208,7 @@ def fetch_otx_threats():
         logger.info(f"ℹ️ Extracted {len(indicators)} indicators from OTX.")
         if span:
             span.set_attribute("otx.indicator.count", len(indicators))
+            span.set_attribute("service.name", SERVICE_NAME_STR)
         return indicators
 
 
@@ -226,9 +229,9 @@ def fetch_threats():
             logger.info(f"✅ Inserted: {item['indicator']} ({item['type']})")
             new_count += 1
             if insert_counter:
-                insert_counter.add(1)
+                insert_counter.add(1, {"service.name": SERVICE_NAME_STR, "type": item["type"]})
             if otx_indicator_counter:
-                otx_indicator_counter.add(1, {"type": item["type"]})
+                otx_indicator_counter.add(1, {"service.name": SERVICE_NAME_STR, "type": item["type"]})
         else:
             duplicate_count += 1
 
