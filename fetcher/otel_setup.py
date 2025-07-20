@@ -1,3 +1,4 @@
+# otel_setup.py
 import os
 import sys
 import logging
@@ -9,8 +10,8 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry._logs import set_logger_provider
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
@@ -18,9 +19,8 @@ from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
 from opentelemetry.trace import get_current_span
 
 load_dotenv()
-
+SERVICE_NAME_FETCHER = os.getenv("SERVICE_NAME_FETCHER")
 STREAM_NAME = os.getenv("OTEL_STREAM_NAME")
-SERVICE_NAME_UI = os.getenv("SERVICE_NAME_UI")
 
 
 class OTELLogFormatter(logging.Formatter):
@@ -30,14 +30,15 @@ class OTELLogFormatter(logging.Formatter):
         record.trace_id = format(span_context.trace_id,
                                  "032x") if span_context and span_context.trace_id else "no-trace"
         record.span_id = format(span_context.span_id, "016x") if span_context and span_context.span_id else "no-span"
-        record.service_name = SERVICE_NAME_UI
+        record.service_name = SERVICE_NAME_FETCHER
         record.stream_name = STREAM_NAME
-        self._style._fmt, original = (
-            f"%(asctime)s 🌐 %(levelname)s | %(name)s | [service={record.service_name} stream={record.stream_name} "
-            f"trace_id={record.trace_id} span_id={record.span_id}] | %(message)s", self._style._fmt,
+        fmt_orig = self._style._fmt
+        self._style._fmt = (
+            f"%(asctime)s 🌐 %(levelname)s | %(message)s | "
+            f"[service={record.service_name} stream={record.stream_name} trace_id={record.trace_id} span_id={record.span_id}]"
         )
         result = super().format(record)
-        self._style._fmt = original
+        self._style._fmt = fmt_orig
         return result
 
 
@@ -45,40 +46,42 @@ def init_logger():
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     formatter = OTELLogFormatter()
-    stream_handler = logging.StreamHandler(sys.stdout)
-    stream_handler.setFormatter(formatter)
-    logger.addHandler(stream_handler)
-
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
     try:
-        log_exporter = OTLPLogExporter(
+        exporter = OTLPLogExporter(
             endpoint=os.getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"),
             headers={"Authorization": os.getenv("OTEL_EXPORTER_OTLP_AUTH"), "stream-name": STREAM_NAME},
         )
-        provider = LoggerProvider(resource=Resource.create({SERVICE_NAME: SERVICE_NAME_UI, "stream.name": STREAM_NAME}))
-        provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
+        provider = LoggerProvider(
+            resource=Resource.create({SERVICE_NAME: SERVICE_NAME_FETCHER, "stream.name": STREAM_NAME}))
+        provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
         set_logger_provider(provider)
-        handler = LoggingHandler(level=logging.INFO, logger_provider=provider)
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-        logger.info("📝 OpenTelemetry Log Exporter initialized successfully.")
+        otel_handler = LoggingHandler(level=logging.INFO, logger_provider=provider)
+        otel_handler.setFormatter(formatter)
+        logger.addHandler(otel_handler)
+        logger.info("📝 Log exporter initialized.")
     except Exception as e:
-        logger.error(f"⚠️ Failed to initialize log exporter: {e}")
+        logger.error(f"⚠️ Failed to init log exporter: {e}")
     return logger
 
 
 def init_tracer(logger):
     try:
-        provider = TracerProvider(resource=Resource.create({SERVICE_NAME: SERVICE_NAME_UI, "stream.name": STREAM_NAME}))
+        resource = Resource.create({SERVICE_NAME: SERVICE_NAME_FETCHER, "stream.name": STREAM_NAME})
+        provider = TracerProvider(resource=resource)
         exporter = OTLPSpanExporter(
             endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
             headers={"Authorization": os.getenv("OTEL_EXPORTER_OTLP_AUTH")},
         )
         provider.add_span_processor(BatchSpanProcessor(exporter))
         trace.set_tracer_provider(provider)
-        logger.info("🛰️ Tracing initialized successfully")
-        return trace.get_tracer(__name__)
-    except Exception as e:
-        logger.warning(f"⚠️ Tracing not initialized: {e}")
+        tracer = trace.get_tracer(SERVICE_NAME_FETCHER)
+        logger.info("🛰️ Tracing initialized")
+        return tracer
+    except Exception:
+        logger.warning("⚠️ Tracing not initialized")
         return None
 
 
@@ -88,18 +91,20 @@ def init_metrics(logger):
             endpoint=os.getenv("OTEL_EXPORTER_OTLP_METRIC_ENDPOINT"),
             headers={"Authorization": os.getenv("OTEL_EXPORTER_OTLP_AUTH")},
         )
-        reader = PeriodicExportingMetricReader(exporter, export_interval_millis=5000)
-        meter_provider = MeterProvider(metric_readers=[reader])
-        metrics.set_meter_provider(meter_provider)
-        meter = metrics.get_meter(SERVICE_NAME_UI)
-        cpu = meter.create_counter("cpu_usage_percent", description="CPU usage %")
-        mem = meter.create_counter("memory_usage_mb", description="Memory usage MB")
-        reqs = meter.create_counter("http_requests_total", description="Total HTTP requests")
-        logger.info("📈 Metrics initialized successfully")
-        return meter, cpu, mem, reqs
-    except Exception as e:
-        logger.warning(f"⚠️ Metrics not initialized: {e}")
-        return None, None, None, None
+        reader = PeriodicExportingMetricReader(exporter, export_interval_millis=60000)
+        provider = MeterProvider(metric_readers=[reader])
+        metrics.set_meter_provider(provider)
+        meter = metrics.get_meter(SERVICE_NAME_FETCHER)
+
+        otx_counter = meter.create_counter("otx_indicators_total")
+        insert_counter = meter.create_counter("threats_inserted")
+        cpu_counter = meter.create_counter("cpu_usage_percent")
+        mem_counter = meter.create_counter("memory_usage_mb")
+        logger.info("📈 Metrics initialized")
+        return meter, otx_counter, insert_counter, cpu_counter, mem_counter, provider
+    except Exception:
+        logger.warning("⚠️ Metrics not initialized")
+        return None, None, None, None, None, None
 
 
 def record_metrics(meter, cpu_counter, mem_counter, logger):
@@ -107,8 +112,6 @@ def record_metrics(meter, cpu_counter, mem_counter, logger):
         return
     cpu = psutil.cpu_percent()
     mem = psutil.Process().memory_info().rss / 1024 / 1024
-    if cpu_counter:
-        cpu_counter.add(cpu, {"service.name": SERVICE_NAME_UI, "stream.name": STREAM_NAME})
-    if mem_counter:
-        mem_counter.add(mem, {"service.name": SERVICE_NAME_UI, "stream.name": STREAM_NAME})
+    cpu_counter.add(cpu, {"service.name": SERVICE_NAME_FETCHER, "stream.name": STREAM_NAME})
+    mem_counter.add(mem, {"service.name": SERVICE_NAME_FETCHER, "stream.name": STREAM_NAME})
     logger.info(f"📊 CPU usage: {cpu:.1f}%, Memory usage: {mem:.2f} MB")

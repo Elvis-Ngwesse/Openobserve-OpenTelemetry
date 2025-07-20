@@ -21,7 +21,7 @@ register_routes(
     cpu_counter,
     mem_counter,
     reqs_counter,
-    lambda: record_metrics(meter, cpu_counter, mem_counter),
+    lambda: record_metrics(meter, cpu_counter, mem_counter, logger),
     SERVICE_NAME_UI,
     STREAM_NAME
 )
