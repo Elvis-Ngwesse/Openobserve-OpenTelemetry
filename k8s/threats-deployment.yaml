@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: threats-app
-          image: dockerelvis/threats-app:293d6b7
+          image: dockerelvis/threat-app:293d6b7
           ports:
             - containerPort: 5020
           envFrom:

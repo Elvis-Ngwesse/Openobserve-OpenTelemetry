@@ -132,8 +132,7 @@ minikube stop minikube delete --all
 minikube delete --all --purge
 
 
-✅ Optional Check
-To test locally:
+# ✅ To test locally:
 brew install kustomize
 kustomize build ./k8s
 
@@ -157,13 +156,20 @@ Do a git pull since flux-system folder is created in remote
 ---
 
 🔄 Force a manual reconciliation
+kubectl get kustomizations -A
+flux reconcile kustomization flux-system --with-source
+---
 
 🗑️ Clean Up Kubernetes Resources
 
-kubectl delete namespace car-app kubectl delete namespace car-logs
+kubectl delete namespace threat
 
 
 🧪 Verify
 kubectl get pods,svc
 kubectl logs deploy/threats-app
 kubectl logs deploy/fetcher-app
+
+
+minikube service threats-app -n threat
+minikube service openobserve -n threat
