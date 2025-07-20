@@ -155,6 +155,32 @@ flux bootstrap github \
 Do a git pull since flux-system folder is created in remote
 ---
 
+## ⚠️ OpenObserve Token Setup Instructions
+- 🔒 **First Deployment: You’ll get a 401 Unauthorized**
+- 🧭 **Visit the following services:**
+    - 🌐 `minikube service threats-app -n threat`
+    - 🌐 `minikube service openobserve -n threat`
+
+- 📊 In **OpenObserve**, go to:
+    - `Settings → Data Sources → Traces (OpenTelemetry)`
+
+- 🔑 **Copy the generated OTLP Auth Token**
+
+- ✍️ Update your `fetcher-secret.yaml` with:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: fetcher-secret
+  namespace: threat
+type: Opaque
+data:
+  OTEL_EXPORTER_OTLP_AUTH: <new base64 encoded token>
+```
+- git commit and push
+- flux reconcile kustomization flux-system --with-source
+---
 🔄 Force a manual reconciliation
 kubectl get kustomizations -A
 flux reconcile kustomization flux-system --with-source
@@ -173,5 +199,3 @@ kubectl logs deploy/threats-app
 kubectl logs deploy/fetcher-app
 ---
 
-minikube service threats-app -n threat
-minikube service openobserve -n threat
