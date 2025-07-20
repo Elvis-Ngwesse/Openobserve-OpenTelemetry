@@ -22,6 +22,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: fetcher-config
+            - secretRef:
+                name: fetcher-secret
 ---
 apiVersion: v1
 kind: Service
