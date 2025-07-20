@@ -1,0 +1,10 @@
+# k8s/threats-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: threats-config
+  namespace: threat
+data:
+  MONGO_URI: mongodb://mongo:27017
+  OPENOBSERVE_URL: http://openobserve:5080
+  FEATURE_FLAG_UI: "true"

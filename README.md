@@ -132,6 +132,12 @@ minikube stop minikube delete --all
 minikube delete --all --purge
 
 
+✅ Optional Check
+To test locally:
+brew install kustomize
+kustomize build ./k8s
+
+
 🚀 1. Deploy (Bootstrap & Add Resources)
 Go to GitHub token settings and create a token with the necessary scopes:
 ---

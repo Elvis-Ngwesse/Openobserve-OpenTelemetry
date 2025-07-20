@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fetcher-config
+  namespace: threat
+data:
+  MONGODB_URI: mongodb://mongo:27017/
+  MONGODB_DB: threatintel
+  MONGODB_COLLECTION: threats
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://openobserve:5080/api/default/v1/traces
+  OTEL_EXPORTER_OTLP_METRIC_ENDPOINT: http://openobserve:5080/api/default/v1/metrics
+  OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://openobserve:5080/api/default/v1/logs
+  OTEL_STREAM_NAME: Openobserve-stream
+  ALIENVAULT_URL: https://otx.alienvault.com/api/v1/pulses/subscribed
+  SERVICE_NAME_UI: Threats-UI
+  SERVICE_NAME_FETCHER: Threats-Fetcher
