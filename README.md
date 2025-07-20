@@ -158,18 +158,20 @@ Do a git pull since flux-system folder is created in remote
 🔄 Force a manual reconciliation
 kubectl get kustomizations -A
 flux reconcile kustomization flux-system --with-source
+
+kubectl -n flux-system describe kustomization flux-system
+
 ---
 
 🗑️ Clean Up Kubernetes Resources
-
 kubectl delete namespace threat
+---
 
-
-🧪 Verify
+# 🧪 Verify
 kubectl get pods,svc
 kubectl logs deploy/threats-app
 kubectl logs deploy/fetcher-app
-
+---
 
 minikube service threats-app -n threat
 minikube service openobserve -n threat
