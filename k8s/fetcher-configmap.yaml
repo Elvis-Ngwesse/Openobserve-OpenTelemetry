@@ -14,3 +14,6 @@ data:
   ALIENVAULT_URL: https://otx.alienvault.com/api/v1/pulses/subscribed
   SERVICE_NAME_UI: Threats-UI
   SERVICE_NAME_FETCHER: Threats-Fetcher
+
+  OPENOBSERVE_URL: http://openobserve:5080
+  FEATURE_FLAG_UI: "true"

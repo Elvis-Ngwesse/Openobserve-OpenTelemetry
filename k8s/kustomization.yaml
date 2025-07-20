@@ -4,7 +4,6 @@ resources:
   - namespace.yaml
   - fetcher-secret.yaml
   - openobserve-secret.yaml
-  - threats-configmap.yaml
   - fetcher-configmap.yaml
   - mongo-deployment.yaml
   - openobserve-deployment.yaml

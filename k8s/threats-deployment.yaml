@@ -21,7 +21,7 @@ spec:
             - containerPort: 5020
           envFrom:
             - configMapRef:
-                name: threats-config
+                name: fetcher-config
 ---
 apiVersion: v1
 kind: Service
